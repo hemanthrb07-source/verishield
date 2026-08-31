@@ -1,0 +1,65 @@
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+.eggs/
+
+# ── Virtual Environment ────────────────────────────────
+venv/
+env/
+.venv/
+.env
+
+# ── Node.js ────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# ── IDE / Editor ───────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Docker ─────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Database ───────────────────────────────────────────
+*.db
+*.sqlite3
+verishield.db
+
+# ── ML Models (large binary files) ─────────────────────
+ml/models/**/*.pth
+ml/models/**/*.pt
+ml/models/**/*.onnx
+ml/models/**/*.pkl
+ml/models/**/*.h5
+!ml/models/.gitkeep
+
+# ── Logs ───────────────────────────────────────────────
+*.log
+logs/
+backend/logs/
+
+# ── Backups ────────────────────────────────────────────
+backups/
+*.sql
+*.sql.gz
+
+# ── OS / Misc ──────────────────────────────────────────
+.tmp/
+temp/
+.cache/
+.freebuff/
