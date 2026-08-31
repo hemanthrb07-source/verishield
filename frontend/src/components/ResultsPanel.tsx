@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { VerificationResult } from '../services/api'
+import { HeatmapDisplay } from './HeatmapDisplay'
 import {
   CheckCircle, XCircle, AlertTriangle, Clock,
-  FileText, Eye, Fingerprint, Network,
+  FileText, Eye, Fingerprint, Network, Layers,
   ChevronDown, ChevronUp, ExternalLink
 } from 'lucide-react'
 
@@ -184,6 +185,44 @@ export function ResultsPanel({ result }: Props) {
           </AnalysisSection>
         )}
       </div>
+
+      {/* Heatmap */}
+      {details.heatmap && (
+        <HeatmapDisplay heatmap={details.heatmap} title="AI Analysis Heatmap" />
+      )}
+
+      {/* Reference Comparison */}
+      {details.reference_comparison && (
+        <div className="card border-cyan-500/30">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-cyan-400 mb-2">
+            <Layers className="w-4 h-4" />
+            Reference Comparison
+          </h3>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="p-2 bg-gray-800/50 rounded-lg text-center">
+              <p className="text-xs text-gray-500">Reference Score</p>
+              <p className="text-lg font-bold text-cyan-400">
+                {(details.reference_comparison.reference_authenticity * 100).toFixed(0)}%
+              </p>
+            </div>
+            <div className="p-2 bg-gray-800/50 rounded-lg text-center">
+              <p className="text-xs text-gray-500">Current Score</p>
+              <p className="text-lg font-bold text-white">
+                {(details.reference_comparison.current_authenticity * 100).toFixed(0)}%
+              </p>
+            </div>
+            <div className="p-2 bg-gray-800/50 rounded-lg text-center">
+              <p className="text-xs text-gray-500">Difference</p>
+              <p className={`text-lg font-bold ${
+                details.reference_comparison.difference > 0.2 ? 'text-red-400' :
+                details.reference_comparison.difference > 0.1 ? 'text-amber-400' : 'text-emerald-400'
+              }`}>
+                {(details.reference_comparison.difference * 100).toFixed(0)}%
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Blockchain */}
       {result.blockchain_tx_hash && (

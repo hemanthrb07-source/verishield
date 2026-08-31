@@ -58,7 +58,7 @@ export function UploadPanel({ onStart, onComplete, onError, isProcessing }: Prop
           result = await api.verifyFull(selectedFile, referenceFile || undefined, userId || undefined)
           break
         case 'document':
-          result = await api.verifyDocument(selectedFile, userId || undefined)
+          result = await api.verifyDocument(selectedFile, referenceFile || undefined, userId || undefined)
           break
         case 'deepfake':
           result = await api.verifyDeepfake(selectedFile, userId || undefined)
@@ -147,8 +147,8 @@ export function UploadPanel({ onStart, onComplete, onError, isProcessing }: Prop
         )}
       </div>
 
-      {/* Reference Image (for face matching) */}
-      {(mode === 'full' || mode === 'face') && (
+      {/* Reference Image */}
+      {(mode === 'full' || mode === 'face' || mode === 'document') && (
         <div
           {...getRefRootProps()}
           className="mt-4 border border-dashed border-gray-700 rounded-xl p-4 text-center cursor-pointer hover:border-gray-600 transition-all"
@@ -168,7 +168,9 @@ export function UploadPanel({ onStart, onComplete, onError, isProcessing }: Prop
             </div>
           ) : (
             <p className="text-xs text-gray-500">
-              Optional: Add reference image for face matching
+              {mode === 'document'
+                ? 'Optional: Add original document for comparison'
+                : 'Optional: Add reference image for comparison'}
             </p>
           )}
         </div>

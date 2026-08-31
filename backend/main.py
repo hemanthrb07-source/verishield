@@ -31,6 +31,7 @@ from backend.services.blockchain_logger.service import BlockchainLogger
 from backend.services.alerts.service import alert_manager
 from backend.services.adversarial.service import AdversarialAttacks, RobustnessEvaluator
 from backend.services.liveness.service import LivenessDetectionService
+from backend.services.heatmap.service import heatmap_service
 
 # ── Service Instances ───────────────────────────────────────────────────
 preprocessor = Preprocessor()
@@ -143,6 +144,7 @@ def _avg_trust_score() -> float:
 async def verify_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    reference_file: Optional[UploadFile] = File(None),
     user_id: Optional[str] = Form(None),
     ip_address: Optional[str] = Form(None),
 ):
@@ -174,7 +176,29 @@ async def verify_document(
         # Document Intelligence Analysis
         doc_results = await doc_service.analyze(preprocessed)
 
-        # Risk scoring (no deepfake/face for documents)
+        # Reference comparison if provided
+        reference_results = None
+        if reference_file:
+            ref_content = await reference_file.read()
+            ref_preprocessed = preprocessor.preprocess_document(ref_content, reference_file.filename)
+            reference_results = await doc_service.analyze(ref_preprocessed)
+            # Compare and add reference diff info
+            if reference_results.get('authenticity_score', 0) > 0:
+                doc_results['reference_comparison'] = {
+                    'reference_authenticity': reference_results.get('authenticity_score', 0),
+                    'current_authenticity': doc_results.get('authenticity_score', 0),
+                    'difference': abs(doc_results.get('authenticity_score', 0) - reference_results.get('authenticity_score', 0)),
+                }
+
+        # Generate heatmap
+        original_image = preprocessed.get('original_image')
+        heatmap_data = None
+        if original_image is not None:
+            heatmap_data = heatmap_service.generate_document_heatmap(
+                original_image, doc_results, reference_results,
+            )
+
+        # Risk scoring
         graph_risk = await fraud_graph.lookup_risk(user_id=user_id, ip_address=ip_address)
         risk = risk_engine.compute_risk_score(
             document_results=doc_results,
@@ -237,8 +261,15 @@ async def verify_document(
                     "tampered_regions": len(doc_results['tampered_regions']),
                     "spacing_anomalies": len(doc_results['spacing_anomalies']),
                     "metadata_flags": len(doc_results['metadata_analysis'].get('suspicious_indicators', [])),
+                    "content_type": doc_results.get('content_type', 'unknown'),
                 },
                 "risk_assessment": risk,
+                "heatmap": {
+                    'image': heatmap_data['heatmap_base64'] if heatmap_data else None,
+                    'regions': heatmap_data['regions'] if heatmap_data else [],
+                    'summary': heatmap_data['summary'] if heatmap_data else {},
+                } if heatmap_data else None,
+                "reference_comparison": doc_results.get('reference_comparison'),
             },
             "processing_time_ms": processing_time,
             "blockchain_tx_hash": bc_result.get('tx_hash'),
@@ -287,6 +318,14 @@ async def verify_deepfake(
 
         # Deepfake detection
         deepfake_results = await deepfake_service.analyze(preprocessed)
+
+        # Generate heatmap
+        original_image = preprocessed.get('original_image')
+        heatmap_data = None
+        if original_image is not None:
+            heatmap_data = heatmap_service.generate_deepfake_heatmap(
+                original_image, deepfake_results,
+            )
 
         # Risk scoring
         graph_risk = await fraud_graph.lookup_risk(user_id=user_id, ip_address=ip_address)
@@ -346,6 +385,11 @@ async def verify_deepfake(
                     "frame_count": len(deepfake_results.get('frame_analysis') or []),
                 },
                 "risk_assessment": risk,
+                "heatmap": {
+                    'image': heatmap_data['heatmap_base64'] if heatmap_data else None,
+                    'regions': heatmap_data['regions'] if heatmap_data else [],
+                    'summary': heatmap_data['summary'] if heatmap_data else {},
+                } if heatmap_data else None,
             },
             "processing_time_ms": processing_time,
             "blockchain_tx_hash": bc_result.get('tx_hash'),

@@ -63,9 +63,10 @@ class ApiService {
     return this.request('/health');
   }
 
-  async verifyDocument(file: File, userId?: string): Promise<VerificationResult> {
+  async verifyDocument(file: File, referenceFile?: File, userId?: string): Promise<VerificationResult> {
     const formData = new FormData();
     formData.append('file', file);
+    if (referenceFile) formData.append('reference_file', referenceFile);
     if (userId) formData.append('user_id', userId);
     return this.request('/verify/document', { method: 'POST', body: formData });
   }
