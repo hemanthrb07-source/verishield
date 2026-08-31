@@ -632,7 +632,11 @@ async def full_verification(
             "reasons": [f['description'] for f in risk['contributing_factors']],
             "detailed_results": {
                 "document_analysis": doc_results if doc_results else None,
-                "deepfake_analysis": deepfake_results if deepfake_results else None,
+                "deepfake_analysis": {
+                    **(deepfake_results if deepfake_results else {}),
+                    "frame_count": len((deepfake_results or {}).get('frame_analysis') or []),
+                    "probability": (deepfake_results or {}).get('deepfake_probability', 0),
+                } if deepfake_results else None,
                 "face_analysis": face_results.__dict__ if face_results else None,
                 "risk_assessment": risk,
             },

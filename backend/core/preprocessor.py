@@ -220,13 +220,20 @@ class Preprocessor:
                 'sampled_frames': len(frames),
             }
             
-        except ImportError:
-            # Fallback: try to treat first bytes as image
-            result = self.preprocess_image(file_content[:min(len(file_content), 1024*1024)])
-            metadata = {'note': 'cv2 not available, processed as image fallback'}
-            frames = [{'frame_array': result['image_array'], 'frame_index': 0}]
+        except Exception as e:
+            # Fallback: try to extract what we can
+            try:
+                result = self.preprocess_image(file_content)
+                metadata = {'note': f'Video processing failed ({str(e)[:50]}), processed as image fallback'}
+                frames = [{'frame_array': result['image_array'], 'frame_index': 0, 'original_frame': result.get('original_image')}]
+            except Exception:
+                metadata = {'note': f'Video processing failed: {str(e)[:80]}', 'total_frames': 0, 'fps': 0, 'duration_seconds': 0, 'sampled_frames': 0}
+                frames = []
         finally:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
         
         return {
             'frames': frames,
