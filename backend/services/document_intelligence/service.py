@@ -1,32 +1,21 @@
 """
 Document Intelligence Service.
-OCR, font analysis, tampering detection, metadata extraction.
+Analyzes actual image content for authenticity using:
+- Color histogram analysis
+- Edge density and consistency
+- Noise pattern analysis
+- Compression artifact detection
+- Text region detection
+- Spatial frequency analysis
+- Color channel correlation
 """
 import numpy as np
 from typing import Optional
-import re
 import hashlib
-from collections import Counter
 
 
 class DocumentIntelligenceService:
-    """Analyze documents for authenticity, tampering, and inconsistencies."""
-
-    def __init__(self):
-        self.ocr_engine = None
-        self._init_ocr()
-
-    def _init_ocr(self):
-        """Initialize OCR engine (EasyOCR preferred, fallback to basic)."""
-        try:
-            import easyocr
-            self.ocr_engine = easyocr.Reader(['en'], gpu=False)
-        except ImportError:
-            try:
-                import pytesseract
-                self.ocr_engine = 'tesseract'
-            except ImportError:
-                self.ocr_engine = 'basic'
+    """Analyze documents for authenticity based on actual image content."""
 
     async def analyze(self, preprocessed_data: dict) -> dict:
         """Run full document analysis pipeline."""
@@ -41,300 +30,498 @@ class DocumentIntelligenceService:
             'reasons': [],
         }
 
-        doc_type = preprocessed_data.get('document_type', 'image_based')
+        original = preprocessed_data.get('original_image')
+        if original is None:
+            results['reasons'].append('No image data available')
+            results['authenticity_score'] = 0.3
+            return results
 
-        if doc_type == 'pdf':
-            results = await self._analyze_pdf(preprocessed_data, results)
-        else:
-            results = await self._analyze_image(preprocessed_data, results)
+        gray = np.mean(original, axis=2).astype(float) if len(original.shape) == 3 else original.astype(float)
+        h, w = gray.shape
 
-        # Metadata analysis
+        # ── 1. Color distribution analysis ──
+        color_issues = self._analyze_color_distribution(original, gray)
+        results['font_inconsistencies'] = color_issues['issues']
+
+        # ── 2. Edge analysis ──
+        edge_issues = self._analyze_edges(gray)
+        results['spacing_anomalies'] = edge_issues['issues']
+
+        # ── 3. Noise analysis ──
+        noise_analysis = self._analyze_noise_patterns(gray)
+
+        # ── 4. Tampering detection via block analysis ──
+        tampered = self._detect_tampering_blocks(gray, original)
+        results['tampered_regions'] = tampered['regions']
+
+        # ── 5. Color channel correlation ──
+        channel_analysis = self._analyze_color_channels(original)
+
+        # ── 6. Resolution quality ──
+        quality = self._analyze_quality(original, gray)
+
+        # ── 7. Document structure analysis ──
+        structure = self._analyze_structure(original, gray)
+
+        # ── 8. Metadata analysis ──
         metadata = preprocessed_data.get('metadata', {})
         results['metadata_analysis'] = self._analyze_metadata(metadata)
 
-        # Compute final authenticity score
-        results['authenticity_score'] = self._compute_authenticity_score(results)
+        # ── Direct score computation from key features ──
+        # Use the most discriminative features directly
+        
+        # 1. Color peak ratio: high = uniform background (document-like)
+        color_peak = color_issues.get('score', 0.5)
+        if color_peak > 0.8:
+            color_score = 0.9
+        elif color_peak > 0.5:
+            color_score = 0.6
+        elif color_peak > 0.2:
+            color_score = 0.4
+        else:
+            color_score = 0.2
+
+        # 2. Edge CV: high = structured content (text regions)
+        edge_cv = edge_issues.get('score', 0.5)
+        if edge_cv > 0.8:
+            edge_score = 0.9
+        elif edge_cv > 0.5:
+            edge_score = 0.7
+        elif edge_cv > 0.3:
+            edge_score = 0.5
+        else:
+            edge_score = 0.2
+
+        # 3. Noise: very high = suspicious
+        noise_anomaly = noise_analysis.get('anomaly_score', 0)
+        if noise_anomaly < 0.1:
+            noise_score = 0.9
+        elif noise_anomaly < 0.3:
+            noise_score = 0.7
+        elif noise_anomaly < 0.5:
+            noise_score = 0.4
+        else:
+            noise_score = 0.15
+
+        # 4. Tampering: fewer regions = better
+        total_blocks = max((h * w) / (64 * 64), 1)
+        tamper_ratio = len(tampered['regions']) / total_blocks
+        if tamper_ratio < 0.02:
+            tamper_score = 0.95
+        elif tamper_ratio < 0.1:
+            tamper_score = 0.7
+        elif tamper_ratio < 0.2:
+            tamper_score = 0.4
+        else:
+            tamper_score = 0.2
+
+        # 5. Resolution quality
+        quality_score = 0.7  # default
+        if quality['is_low_res']:
+            quality_score = 0.4
+        if quality['high_entropy']:
+            quality_score *= 0.6
+        if quality['is_too_uniform']:
+            quality_score *= 0.5
+
+        # 6. Content type adjustment
+        content_type = self._classify_content_type(original, gray, structure)
+        results['content_type'] = content_type
+        type_multiplier = {'document': 1.0, 'natural': 0.85, 'synthetic': 0.6, 'noise': 0.3}.get(content_type, 0.7)
+
+        # Weighted combination
+        score = (
+            color_score * 0.20 +
+            edge_score * 0.20 +
+            noise_score * 0.15 +
+            tamper_score * 0.25 +
+            quality_score * 0.10 +
+            structure.get('score', 0.5) * 0.10
+        ) * type_multiplier
+
+        # Small image penalty
+        if h < 100 or w < 100:
+            score *= 0.7
+        if h < 50 or w < 50:
+            score *= 0.5
+
+        # Metadata penalty
+        meta = results['metadata_analysis']
+        if meta.get('editing_software_detected'):
+            score *= 0.9
+
+        score = max(0.05, min(1.0, score))
+        results['authenticity_score'] = score
+        results['tampering_detected'] = score < 0.7 or len(tampered['regions']) > 2
+
+        # Build reasons
+        if len(color_issues['issues']) > 0:
+            results['reasons'].append(f"Color distribution anomalies: {len(color_issues['issues'])} issue(s)")
+        if len(edge_issues['issues']) > 0:
+            results['reasons'].append(f"Edge inconsistencies: {len(edge_issues['issues'])} issue(s)")
+        if noise_analysis['anomaly_score'] > 0.3:
+            results['reasons'].append(f"Noise pattern anomaly: {noise_analysis['anomaly_score']:.2f}")
+        if len(tampered['regions']) > 0:
+            results['reasons'].append(f"Tampered regions detected: {len(tampered['regions'])}")
+        if channel_analysis['anomaly']:
+            results['reasons'].append("Unusual color channel correlation")
+        if quality['is_too_uniform']:
+            results['reasons'].append("Image is too uniform (possible synthetic)")
+        if results['tampering_detected']:
+            results['reasons'].append("Document appears to have been modified")
 
         return results
 
-    async def _analyze_image(self, data: dict, results: dict) -> dict:
-        """Analyze a single image document."""
-        original = data.get('original_image')
-        if original is None:
-            return results
-
-        # OCR
-        ocr_result = self._run_ocr(original)
-        results['ocr_confidence'] = ocr_result.get('confidence', 0.0)
-
-        # Font analysis via pixel-level statistics
-        font_issues = self._detect_font_inconsistencies(original)
-        results['font_inconsistencies'] = font_issues
-        if font_issues:
-            results['tampering_detected'] = True
-            results['reasons'].append(f"Detected {len(font_issues)} font inconsistency(ies)")
-
-        # Spacing analysis
-        spacing_issues = self._detect_spacing_anomalies(original)
-        results['spacing_anomalies'] = spacing_issues
-        if spacing_issues:
-            results['tampering_detected'] = True
-            results['reasons'].append(f"Detected {len(spacing_issues)} spacing anomaly(ies)")
-
-        # Tampered region detection using frequency analysis
-        tampered = self._detect_tampered_regions(original)
-        results['tampered_regions'] = tampered
-        if tampered:
-            results['tampering_detected'] = True
-            results['reasons'].append(f"Detected {len(tampered)} potentially tampered region(s)")
-
-        return results
-
-    async def _analyze_pdf(self, data: dict, results: dict) -> dict:
-        """Analyze a PDF document page by page."""
-        pages = data.get('pages', [])
-        all_font_issues = []
-        all_spacing = []
-        all_tampered = []
-        all_reasons = []
-
-        for page in pages:
-            page_img = page.get('image')
-            if page_img is None:
-                continue
-
-            font_issues = self._detect_font_inconsistencies(page_img)
-            spacing = self._detect_spacing_anomalies(page_img)
-            tampered = self._detect_tampered_regions(page_img)
-
-            all_font_issues.extend([{**f, 'page': page['page_num']} for f in font_issues])
-            all_spacing.extend([{**s, 'page': page['page_num']} for s in spacing])
-            all_tampered.extend([{**t, 'page': page['page_num']} for t in tampered])
-
-        results['font_inconsistencies'] = all_font_issues
-        results['spacing_anomalies'] = all_spacing
-        results['tampered_regions'] = all_tampered
-
-        if all_font_issues:
-            results['tampering_detected'] = True
-            all_reasons.append(f"Font inconsistencies across {len(pages)} page(s)")
-        if all_spacing:
-            results['tampering_detected'] = True
-            all_reasons.append(f"Spacing anomalies detected")
-        if all_tampered:
-            results['tampering_detected'] = True
-            all_reasons.append(f"Tampered regions found")
-
-        results['reasons'] = all_reasons
-
-        # PDF metadata analysis
-        pdf_meta = data.get('metadata', {})
-        results['metadata_analysis'] = self._analyze_metadata(pdf_meta)
-
-        return results
-
-    def _run_ocr(self, image: np.ndarray) -> dict:
-        """Run OCR on an image."""
-        if self.ocr_engine is None:
-            return {'text': '', 'confidence': 0.0}
-
-        if self.ocr_engine == 'basic':
-            return self._basic_ocr(image)
-
-        try:
-            if hasattr(self.ocr_engine, 'readtext'):
-                results = self.ocr_engine.readtext(image)
-                text_parts = []
-                confidences = []
-                for (bbox, text, conf) in results:
-                    text_parts.append(text)
-                    confidences.append(conf)
-                return {
-                    'text': ' '.join(text_parts),
-                    'confidence': np.mean(confidences) if confidences else 0.0,
-                    'details': results,
-                }
-        except Exception:
-            pass
-
-        return self._basic_ocr(image)
-
-    def _basic_ocr(self, image: np.ndarray) -> dict:
-        """Fallback basic OCR using image statistics."""
-        gray = np.mean(image, axis=2) if len(image.shape) == 3 else image
-        # Simple threshold-based character detection
-        threshold = 128
-        binary = (gray < threshold).astype(float)
-        # Estimate text density
-        text_density = np.mean(binary)
-        return {
-            'text': f'[Basic analysis: text density={text_density:.3f}]',
-            'confidence': min(text_density * 5, 1.0),
-        }
-
-    def _detect_font_inconsistencies(self, image: np.ndarray) -> list:
-        """Detect font inconsistencies via pixel-level analysis."""
+    def _analyze_color_distribution(self, original: np.ndarray, gray: np.ndarray) -> dict:
+        """Analyze color histogram for anomalies."""
         issues = []
-        gray = np.mean(image, axis=2) if len(image.shape) == 3 else image.astype(float)
+        score = 1.0
+
+        if len(original.shape) == 3 and original.shape[2] >= 3:
+            for ch in range(3):
+                channel = original[:, :, ch].flatten()
+                hist, _ = np.histogram(channel, bins=256, range=(0, 256))
+
+                # Check for unusual peaks (clipping, manipulation)
+                total_pixels = len(channel)
+                peak_ratio = np.max(hist) / total_pixels
+                if peak_ratio > 0.4:
+                    issues.append({
+                        'type': 'color_peak',
+                        'channel': ['R', 'G', 'B'][ch],
+                        'severity': 'medium',
+                        'score': peak_ratio,
+                    })
+                    score *= 0.85
+
+                # Check for bimodal distribution (tampering indicator)
+                nonzero = hist[hist > 0]
+                if len(nonzero) > 10:
+                    gaps = np.diff(np.where(hist > total_pixels * 0.001)[0])
+                    large_gaps = np.sum(gaps > 30)
+                    if large_gaps > 3:
+                        issues.append({
+                            'type': 'bimodal_distribution',
+                            'channel': ['R', 'G', 'B'][ch],
+                            'severity': 'low',
+                            'score': large_gaps / 10,
+                        })
+                        score *= 0.95
+
+        return {'issues': issues, 'score': max(0.0, score)}
+
+    def _analyze_edges(self, gray: np.ndarray) -> dict:
+        """Analyze edge consistency for anomalies."""
+        issues = []
+        score = 1.0
 
         h, w = gray.shape
         if h < 10 or w < 10:
-            return issues
+            return {'issues': issues, 'score': 0.5}
 
-        # Divide into grid cells and analyze local statistics
-        grid_size = 8
-        cell_h, cell_w = h // grid_size, w // grid_size
+        # Simple edge detection via gradient
+        gy, gx = np.gradient(gray)
+        edge_magnitude = np.sqrt(gx**2 + gy**2)
 
-        local_means = []
-        local_stds = []
-        local_sharpness = []
+        # Analyze edge density in blocks
+        block_size = max(h // 8, 8)
+        densities = []
+        for i in range(0, h - block_size, block_size):
+            for j in range(0, w - block_size, block_size):
+                block = edge_magnitude[i:i+block_size, j:j+block_size]
+                density = np.mean(block)
+                densities.append(density)
 
-        for i in range(grid_size):
-            for j in range(grid_size):
-                cell = gray[i*cell_h:(i+1)*cell_h, j*cell_w:(j+1)*cell_w]
-                local_means.append(np.mean(cell))
-                local_stds.append(np.std(cell))
-                # Sharpness via Laplacian variance
-                if cell.shape[0] > 2 and cell.shape[1] > 2:
-                    laplacian = np.array([[0,1,0],[1,-4,1],[0,1,0]])
-                    from scipy.ndimage import convolve
-                    filtered = convolve(cell, laplacian)
-                    local_sharpness.append(np.var(filtered))
-                else:
-                    local_sharpness.append(0.0)
+        if len(densities) < 2:
+            return {'issues': issues, 'score': 0.5}
 
-        if len(local_means) < 4:
-            return issues
+        densities = np.array(densities)
+        mean_density = np.mean(densities)
+        std_density = np.std(densities)
 
-        # Detect inconsistencies (outliers in local statistics)
-        mean_std = np.std(local_means)
-        sharpness_std = np.std(local_sharpness) if local_sharpness else 0
-        mean_sharpness = np.mean(local_sharpness) if local_sharpness else 0
-
-        if mean_std > 30:
+        # High variance in edge density suggests tampering
+        cv = std_density / (mean_density + 1e-6)
+        if cv > 1.5:
             issues.append({
-                'type': 'brightness_variation',
+                'type': 'edge_density_variance',
                 'severity': 'medium',
-                'description': f'Unusual brightness variation (std={mean_std:.1f})',
-                'score': min(mean_std / 50.0, 1.0),
+                'description': f'High edge density variance (cv={cv:.2f})',
+                'score': min(cv / 3, 1.0),
             })
+            score *= 0.8
 
-        if mean_sharpness > 0 and sharpness_std / mean_sharpness > 0.5:
+        # Very low edge density means no document content
+        if mean_density < 1.0:
             issues.append({
-                'type': 'sharpness_inconsistency',
-                'severity': 'medium',
-                'description': 'Inconsistent sharpness suggests editing',
-                'score': min(sharpness_std / (mean_sharpness + 1e-6), 1.0),
+                'type': 'low_content',
+                'severity': 'info',
+                'description': 'Very low edge density - minimal content',
             })
+            score *= 0.9
 
-        return issues
+        return {'issues': issues, 'score': max(0.0, score)}
 
-    def _detect_spacing_anomalies(self, image: np.ndarray) -> list:
-        """Detect spacing anomalies using horizontal projection analysis."""
-        issues = []
-        gray = np.mean(image, axis=2) if len(image.shape) == 3 else image.astype(float)
-
-        # Horizontal projection (sum of dark pixels per row)
-        threshold = 128
-        binary = (gray < threshold).astype(float)
-        projection = np.sum(binary, axis=1)
-
-        # Analyze gaps (rows with very few dark pixels)
-        text_rows = projection > np.max(projection) * 0.05
-        gap_sizes = []
-        current_gap = 0
-
-        for is_text in text_rows:
-            if not is_text:
-                current_gap += 1
-            else:
-                if current_gap > 0:
-                    gap_sizes.append(current_gap)
-                current_gap = 0
-
-        if len(gap_sizes) > 2:
-            gap_std = np.std(gap_sizes)
-            gap_mean = np.mean(gap_sizes)
-            if gap_mean > 0 and gap_std / gap_mean > 0.8:
-                issues.append({
-                    'type': 'irregular_spacing',
-                    'severity': 'low',
-                    'description': f'Irregular line spacing detected (cv={gap_std/gap_mean:.2f})',
-                    'score': min(gap_std / (gap_mean + 1e-6) / 2.0, 1.0),
-                })
-
-        return issues
-
-    def _detect_tampered_regions(self, image: np.ndarray) -> list:
-        """Detect potentially tampered regions using frequency analysis."""
-        regions = []
-        gray = np.mean(image, axis=2) if len(image.shape) == 3 else image.astype(float)
-
+    def _analyze_noise_patterns(self, gray: np.ndarray) -> dict:
+        """Analyze noise patterns for manipulation artifacts."""
         h, w = gray.shape
-        if h < 32 or w < 32:
-            return regions
+        if h < 20 or w < 20:
+            return {'anomaly_score': 0.3}
 
-        # Divide into blocks and analyze FFT consistency
+        # Compute local noise via Laplacian
+        laplacian = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=float)
+        try:
+            from scipy.ndimage import convolve
+            filtered = convolve(gray, laplacian)
+        except ImportError:
+            # Fallback: manual convolution
+            filtered = np.zeros_like(gray)
+            filtered[1:-1, 1:-1] = (
+                gray[:-2, 1:-1] + gray[2:, 1:-1] +
+                gray[1:-1, :-2] + gray[1:-1, 2:] -
+                4 * gray[1:-1, 1:-1]
+            )
+
+        noise_var = np.var(filtered)
+        noise_mean = np.abs(np.mean(filtered))
+
+        # Check for noise inconsistency in blocks
+        block_size = max(h // 6, 8)
+        block_noises = []
+        for i in range(0, h - block_size, block_size):
+            for j in range(0, w - block_size, block_size):
+                block = filtered[i:i+block_size, j:j+block_size]
+                block_noises.append(np.var(block))
+
+        anomaly_score = 0.0
+        if len(block_noises) > 2:
+            block_noises = np.array(block_noises)
+            noise_cv = np.std(block_noises) / (np.mean(block_noises) + 1e-6)
+            # Different noise levels in different regions = possible splicing
+            anomaly_score = min(noise_cv / 3, 1.0)
+
+        return {
+            'anomaly_score': round(anomaly_score, 4),
+            'noise_variance': round(noise_var, 4),
+            'noise_mean': round(noise_mean, 4),
+        }
+
+    def _detect_tampering_blocks(self, gray: np.ndarray, original: np.ndarray) -> dict:
+        """Detect tampered regions via frequency analysis."""
+        regions = []
+        h, w = gray.shape
+
         block_size = 64
-        num_blocks_h = h // block_size
-        num_blocks_w = w // block_size
+        if h < block_size * 2 or w < block_size * 2:
+            return {'regions': regions}
 
-        if num_blocks_h < 2 or num_blocks_w < 2:
-            return regions
+        # Compute frequency features per block
+        block_features = []
+        for i in range(0, h - block_size, block_size // 2):
+            for j in range(0, w - block_size, block_size // 2):
+                block = gray[i:i+block_size, j:j+block_size].astype(float)
 
-        spectral_energies = []
-        for i in range(num_blocks_h):
-            for j in range(num_blocks_w):
-                block = gray[i*block_size:(i+1)*block_size, j*block_size:(j+1)*block_size]
+                # FFT analysis
                 fft = np.fft.fft2(block)
                 fft_shift = np.fft.fftshift(fft)
                 magnitude = np.abs(fft_shift)
-                # High-frequency energy ratio
+
                 center = block_size // 2
-                total_energy = np.sum(magnitude)
-                high_freq_energy = np.sum(magnitude) - np.sum(magnitude[center-8:center+8, center-8:center+8])
-                ratio = high_freq_energy / (total_energy + 1e-6)
-                spectral_energies.append({
-                    'ratio': ratio,
-                    'block_i': i,
-                    'block_j': j,
-                    'x': j * block_size,
-                    'y': i * block_size,
+                total_energy = np.sum(magnitude) + 1e-10
+                high_freq = np.sum(magnitude) - np.sum(magnitude[center-8:center+8, center-8:center+8])
+                high_freq_ratio = high_freq / total_energy
+
+                # Local contrast
+                local_std = np.std(block)
+
+                block_features.append({
+                    'i': i, 'j': j,
+                    'high_freq_ratio': high_freq_ratio,
+                    'local_std': local_std,
                 })
 
-        if len(spectral_energies) < 4:
-            return regions
+        if len(block_features) < 4:
+            return {'regions': regions}
 
-        ratios = [e['ratio'] for e in spectral_energies]
-        mean_ratio = np.mean(ratios)
-        std_ratio = np.std(ratios)
+        # Find outlier blocks
+        hf_ratios = np.array([b['high_freq_ratio'] for b in block_features])
+        stds = np.array([b['local_std'] for b in block_features])
 
-        # Blocks that deviate significantly may be tampered
-        for energy in spectral_energies:
-            if std_ratio > 0 and abs(energy['ratio'] - mean_ratio) > 2 * std_ratio:
-                regions.append({
-                    'x': energy['x'],
-                    'y': energy['y'],
-                    'w': block_size,
-                    'h': block_size,
-                    'confidence': min(abs(energy['ratio'] - mean_ratio) / (3 * std_ratio), 1.0),
-                    'type': 'spectral_anomaly',
-                })
+        hf_mean, hf_std = np.mean(hf_ratios), np.std(hf_ratios)
+        std_mean, std_std_val = np.mean(stds), np.std(stds)
 
-        return regions
+        for feat in block_features:
+            is_outlier = False
+            reasons = []
+
+            if hf_std > 0 and abs(feat['high_freq_ratio'] - hf_mean) > 2 * hf_std:
+                is_outlier = True
+                reasons.append('frequency_mismatch')
+            if std_std_val > 0 and abs(feat['local_std'] - std_mean) > 2 * std_std_val:
+                is_outlier = True
+                reasons.append('contrast_mismatch')
+
+            if is_outlier:
+                confidence = 0.0
+                if hf_std > 0:
+                    confidence += min(abs(feat['high_freq_ratio'] - hf_mean) / (3 * hf_std), 1.0) * 0.5
+                if std_std_val > 0:
+                    confidence += min(abs(feat['local_std'] - std_mean) / (3 * std_std_val), 1.0) * 0.5
+
+                if confidence > 0.4:
+                    regions.append({
+                        'x': int(feat['j']),
+                        'y': int(feat['i']),
+                        'w': block_size,
+                        'h': block_size,
+                        'confidence': round(confidence, 3),
+                        'type': 'frequency_anomaly',
+                        'reasons': reasons,
+                    })
+
+        return {'regions': regions}
+
+    def _analyze_color_channels(self, original: np.ndarray) -> dict:
+        """Analyze inter-channel correlations."""
+        if len(original.shape) != 3 or original.shape[2] < 3:
+            return {'anomaly': False}
+
+        r, g, b = original[:,:,0].flatten(), original[:,:,1].flatten(), original[:,:,2].flatten()
+
+        # Normal images have high R-G and R-B correlation
+        corr_rg = np.corrcoef(r, g)[0, 1] if len(r) > 1 else 0
+        corr_rb = np.corrcoef(r, b)[0, 1] if len(r) > 1 else 0
+        corr_gb = np.corrcoef(g, b)[0, 1] if len(r) > 1 else 0
+
+        # Unusual if correlations are very low (for natural images)
+        anomaly = corr_rg < 0.3 or corr_rb < 0.3
+
+        return {
+            'anomaly': anomaly,
+            'corr_rg': round(float(corr_rg), 4),
+            'corr_rb': round(float(corr_rb), 4),
+            'corr_gb': round(float(corr_gb), 4),
+        }
+
+    def _analyze_quality(self, original: np.ndarray, gray: np.ndarray) -> dict:
+        """Analyze image quality metrics."""
+        h, w = gray.shape
+
+        # Check if image is too uniform
+        flatness = np.std(gray) / (np.mean(gray) + 1e-6)
+        is_too_uniform = flatness < 0.05
+
+        # Check if resolution is low
+        is_low_res = h < 200 or w < 200
+
+        # Check entropy (information content)
+        hist, _ = np.histogram(gray.flatten(), bins=256, range=(0, 256))
+        hist = hist / (hist.sum() + 1e-10)
+        entropy = -np.sum(hist[hist > 0] * np.log2(hist[hist > 0]))
+        high_entropy = entropy > 7.0  # Very high entropy = noise-like
+
+        return {
+            'flatness': round(float(flatness), 4),
+            'entropy': round(float(entropy), 4),
+            'is_too_uniform': is_too_uniform,
+            'is_low_res': is_low_res,
+            'high_entropy': high_entropy,
+        }
+
+    def _classify_content_type(self, original: np.ndarray, gray: np.ndarray, structure: dict) -> str:
+        """Classify the image content type."""
+        h, w = gray.shape
+
+        # Check for noise (high entropy, no structure)
+        flatness = np.std(gray) / (np.mean(gray) + 1e-10)
+        if flatness > 0.3 and structure.get('peak_ratio', 0) < 0.02:
+            return 'noise'
+
+        # Check for uniform/synthetic (low edge variance, high peak)
+        if structure.get('peak_ratio', 0) > 0.8 and structure.get('edge_cv', 0) > 1.0:
+            return 'document'
+
+        # Check for natural image (moderate edge CV, moderate peak)
+        if structure.get('edge_cv', 0) > 0.3 and structure.get('peak_ratio', 0) > 0.05:
+            return 'natural'
+
+        return 'synthetic'
+
+    def _analyze_structure(self, original: np.ndarray, gray: np.ndarray) -> dict:
+        """Analyze how structured/organized the image content is."""
+        h, w = gray.shape
+        if h < 20 or w < 20:
+            return {'score': 0.3, 'details': 'too_small'}
+
+        signals = []
+
+        # 1. Color peak ratio (high = uniform background = document-like)
+        if len(original.shape) == 3 and original.shape[2] >= 3:
+            for ch in range(3):
+                channel = original[:, :, ch].flatten()
+                hist, _ = np.histogram(channel, bins=256, range=(0, 256))
+                peak_ratio = np.max(hist) / len(channel)
+                signals.append(peak_ratio)
+        peak_score = max(signals) if signals else 0.5
+
+        # 2. Edge density CV (high = structured text regions)
+        gy, gx = np.gradient(gray)
+        edge_mag = np.sqrt(gx**2 + gy**2)
+        block_size = max(h // 8, 8)
+        densities = []
+        for i in range(0, h - block_size, block_size):
+            for j in range(0, w - block_size, block_size):
+                densities.append(np.mean(edge_mag[i:i+block_size, j:j+block_size]))
+        if len(densities) > 1:
+            densities = np.array(densities)
+            edge_cv = np.std(densities) / (np.mean(densities) + 1e-6)
+        else:
+            edge_cv = 0.5
+        edge_score = min(edge_cv / 3, 1.0)
+
+        # 3. Flatness (low = uniform background = document-like)
+        flatness = np.std(gray) / (np.mean(gray) + 1e-10)
+        flatness_score = max(0, 1.0 - flatness)
+
+        # 4. Block frequency consistency
+        block_feats = []
+        for i in range(0, h - 64, 32):
+            for j in range(0, w - 64, 32):
+                block = gray[i:i+64, j:j+64]
+                fft = np.fft.fft2(block)
+                fft_shift = np.fft.fftshift(fft)
+                mag = np.abs(fft_shift)
+                center = 32
+                total = np.sum(mag) + 1e-10
+                hf = np.sum(mag) - np.sum(mag[center-8:center+8, center-8:center+8])
+                block_feats.append(hf / total)
+        if len(block_feats) > 1:
+            block_feats = np.array(block_feats)
+            bf_cv = np.std(block_feats) / (np.mean(block_feats) + 1e-6)
+        else:
+            bf_cv = 0.5
+        bf_score = min(bf_cv / 3, 1.0)
+
+        # Combine signals
+        structure_score = (peak_score * 0.3 + edge_score * 0.3 + flatness_score * 0.2 + bf_score * 0.2)
+
+        return {
+            'score': round(structure_score, 4),
+            'peak_ratio': round(peak_score, 4),
+            'edge_cv': round(edge_cv, 4),
+            'flatness': round(flatness, 4),
+            'block_freq_cv': round(bf_cv, 4),
+        }
 
     def _analyze_metadata(self, metadata: dict) -> dict:
-        """Analyze document/image metadata for suspicious indicators."""
+        """Analyze image metadata for suspicious indicators."""
         analysis = {
             'suspicious_indicators': [],
             'has_exif': metadata.get('has_exif', False),
             'editing_software_detected': False,
-            'modification_dates': [],
         }
 
         exif = metadata.get('exif', {})
         if exif:
-            # Check for known editing software
             software_tags = ['Photoshop', 'GIMP', 'Lightroom', 'Snapseed', 'Afterlight']
             software = str(exif.get('Software', ''))
             for tag in software_tags:
@@ -343,21 +530,8 @@ class DocumentIntelligenceService:
                     analysis['suspicious_indicators'].append({
                         'type': 'editing_software',
                         'value': software,
-                        'severity': 'info',
+                        'severity': 'warning',
                     })
-
-            # Check for date inconsistencies
-            dates = {}
-            for key in ['DateTime', 'DateTimeOriginal', 'DateTimeDigitized']:
-                if key in exif:
-                    dates[key] = exif[key]
-            if len(set(dates.values())) > 1:
-                analysis['suspicious_indicators'].append({
-                    'type': 'date_inconsistency',
-                    'value': dates,
-                    'severity': 'warning',
-                })
-
         else:
             analysis['suspicious_indicators'].append({
                 'type': 'no_metadata',
@@ -366,29 +540,3 @@ class DocumentIntelligenceService:
             })
 
         return analysis
-
-    def _compute_authenticity_score(self, results: dict) -> float:
-        """Compute final document authenticity score 0-1 (1 = authentic)."""
-        score = 1.0
-
-        # Penalize for each type of issue
-        for issue in results.get('font_inconsistencies', []):
-            severity = issue.get('severity', 'low')
-            penalty = {'high': 0.3, 'medium': 0.15, 'low': 0.05}.get(severity, 0.05)
-            score -= penalty * issue.get('score', 0.5)
-
-        for issue in results.get('spacing_anomalies', []):
-            score -= 0.1 * issue.get('score', 0.5)
-
-        for region in results.get('tampered_regions', []):
-            score -= 0.2 * region.get('confidence', 0.5)
-
-        # Penalize for metadata issues
-        meta = results.get('metadata_analysis', {})
-        if meta.get('editing_software_detected'):
-            score -= 0.05
-        for indicator in meta.get('suspicious_indicators', []):
-            if indicator.get('severity') == 'warning':
-                score -= 0.05
-
-        return max(0.0, min(1.0, score))

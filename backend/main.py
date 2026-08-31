@@ -221,7 +221,7 @@ async def verify_document(
 
         await _broadcast_alerts(verification_id, verification_store[verification_id])
 
-        return {
+        return _safe_serialize({
             "verification_id": verification_id,
             "status": "COMPLETED",
             "file_type": "DOCUMENT",
@@ -243,7 +243,7 @@ async def verify_document(
             "processing_time_ms": processing_time,
             "blockchain_tx_hash": bc_result.get('tx_hash'),
             "created_at": datetime.utcnow().isoformat(),
-        }
+        })
 
     except Exception as e:
         verification_store[verification_id]['status'] = 'FAILED'
@@ -327,7 +327,7 @@ async def verify_deepfake(
 
         await _broadcast_alerts(verification_id, verification_store[verification_id])
 
-        return {
+        return _safe_serialize({
             "verification_id": verification_id,
             "status": "COMPLETED",
             "file_type": file_type,
@@ -350,11 +350,31 @@ async def verify_deepfake(
             "processing_time_ms": processing_time,
             "blockchain_tx_hash": bc_result.get('tx_hash'),
             "created_at": datetime.utcnow().isoformat(),
-        }
+        })
 
     except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
         verification_store[verification_id]['status'] = 'FAILED'
         raise HTTPException(500, f"Deepfake verification failed: {str(e)}")
+
+
+def _safe_serialize(obj):
+    """Recursively convert numpy types for JSON serialization."""
+    import numpy as _np
+    if isinstance(obj, dict):
+        return {k: _safe_serialize(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_safe_serialize(v) for v in obj]
+    elif isinstance(obj, (_np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (_np.floating,)):
+        return float(obj)
+    elif isinstance(obj, _np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, _np.bool_):
+        return bool(obj)
+    return obj
 
 
 @app.post("/verify/face")
@@ -434,7 +454,7 @@ async def verify_face(
 
         await _broadcast_alerts(verification_id, verification_store[verification_id])
 
-        return {
+        return _safe_serialize({
             "verification_id": verification_id,
             "status": "COMPLETED",
             "file_type": "IMAGE",
@@ -454,7 +474,7 @@ async def verify_face(
             "processing_time_ms": processing_time,
             "blockchain_tx_hash": bc_result.get('tx_hash'),
             "created_at": datetime.utcnow().isoformat(),
-        }
+        })
 
     except Exception as e:
         verification_store[verification_id]['status'] = 'FAILED'
@@ -558,7 +578,7 @@ async def full_verification(
 
         await _broadcast_alerts(verification_id, verification_store[verification_id])
 
-        return {
+        return _safe_serialize({
             "verification_id": verification_id,
             "status": "COMPLETED",
             "file_type": file_type,
@@ -575,7 +595,7 @@ async def full_verification(
             "processing_time_ms": processing_time,
             "blockchain_tx_hash": bc_result.get('tx_hash'),
             "created_at": datetime.utcnow().isoformat(),
-        }
+        })
 
     except Exception as e:
         verification_store[verification_id]['status'] = 'FAILED'
@@ -759,7 +779,7 @@ async def verify_liveness(
 
         await _broadcast_alerts(verification_id, verification_store[verification_id])
 
-        return {
+        return _safe_serialize({
             'verification_id': verification_id,
             'status': 'COMPLETED',
             'file_type': file_type,

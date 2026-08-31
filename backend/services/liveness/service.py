@@ -59,7 +59,7 @@ class LivenessDetectionService:
         return results
 
     async def _analyze_single(self, data: dict, results: dict) -> dict:
-        """Analyze a single image for liveness."""
+        """Analyze a single image for liveness using content analysis."""
         image_array = data.get('image_array')
         if image_array is None:
             results['reasons'].append('No image data available')
@@ -67,93 +67,87 @@ class LivenessDetectionService:
             results['confidence'] = 0.0
             return results
 
-        tensor = torch.FloatTensor(image_array).unsqueeze(0).to(self.device)
+        # Get original image for analysis
+        original = data.get('original_image')
+        if original is None:
+            # Convert from CHW
+            if len(image_array.shape) == 3 and image_array.shape[0] in (1, 3):
+                original = np.transpose(image_array, (1, 2, 0))
+                if original.max() <= 1.0:
+                    original = (original * 255).astype(np.uint8)
+            else:
+                original = image_array
 
-        with torch.no_grad():
-            output = self.model(tensor)
+        gray = np.mean(original, axis=2).astype(float) if len(original.shape) == 3 else original.astype(float)
+        h, w = gray.shape
 
-        # ── Spoof Detection ──
-        spoof_prob = output['spoof_probability'].item()
-        is_real = output['is_real'].item()
-        results['liveness_score'] = 1.0 - spoof_prob
-        results['is_live'] = is_real
+        # ── 1. Texture Analysis (moiré, screen, print) ──
+        texture = self._analyze_texture_content(gray)
+        results['texture_analysis'] = texture
 
-        # ── Head Pose ──
-        pose = output['head_pose'].cpu().numpy().flatten()
-        yaw, pitch, roll = float(pose[0]), float(pose[1]), float(pose[2])
-        results['head_pose'] = {
-            'yaw': round(yaw, 2),
-            'pitch': round(pitch, 2),
-            'roll': round(roll, 2),
-            'within_valid_range': self._check_pose_validity(yaw, pitch, roll),
-            'face_3d': yaw != 0 or pitch != 0 or roll != 0,
-        }
+        # ── 2. Depth Estimation (flat vs 3D) ──
+        depth = self._estimate_depth_content(gray, original)
+        results['depth_analysis'] = depth
 
-        # ── Depth Analysis ──
-        depth_map = output['depth_map'].cpu().numpy().flatten()
-        depth_stats = self._analyze_depth(depth_map)
-        results['depth_analysis'] = depth_stats
+        # ── 3. Head Pose Estimation ──
+        pose = self._estimate_pose_content(gray)
+        results['head_pose'] = pose
 
-        # ── Texture Analysis ──
-        texture = output['texture_labels']
-        texture_scores = {
-            'moire_pattern': float(texture['moire_pattern'].item()),
-            'screen_reflection': float(texture['screen_reflection'].item()),
-            'screen_edge': float(texture['screen_edge'].item()),
-            'print_artifact': float(texture['print_artifact'].item()),
-        }
-        results['texture_analysis'] = texture_scores
+        # ── 4. Compute Liveness Score ──
+        score_factors = []
 
-        # ── Build Reasons ──
-        confidence_parts = []
+        # Texture: high moiré/screen/print = likely spoof
+        spoof_texture = (texture.get('moire_pattern', 0) + texture.get('screen_reflection', 0) + texture.get('screen_edge', 0) + texture.get('print_artifact', 0)) / 4
+        score_factors.append(max(0, 1.0 - spoof_texture * 2))
 
-        if not is_real:
-            results['reasons'].append(
-                f"Spoof detected with {(spoof_prob * 100):.1f}% confidence"
-            )
-            confidence_parts.append(spoof_prob)
-
-            # Identify spoof type
-            results['spoof_type'] = self._classify_spoof_type(texture_scores, depth_stats)
-            if results['spoof_type']:
-                results['reasons'].append(f"Spoof type: {results['spoof_type']}")
-
-        # Texture anomalies
-        if texture_scores['moire_pattern'] > 0.6:
-            results['reasons'].append('Moiré pattern detected (possible screen replay)')
-            confidence_parts.append(texture_scores['moire_pattern'])
-        if texture_scores['screen_reflection'] > 0.6:
-            results['reasons'].append('Screen reflection detected')
-            confidence_parts.append(texture_scores['screen_reflection'])
-        if texture_scores['screen_edge'] > 0.6:
-            results['reasons'].append('Screen edge detected (possible device replay)')
-            confidence_parts.append(texture_scores['screen_edge'])
-        if texture_scores['print_artifact'] > 0.6:
-            results['reasons'].append('Print artifacts detected (possible photo replay)')
-            confidence_parts.append(texture_scores['print_artifact'])
-
-        # Pose issues
-        if not results['head_pose']['within_valid_range']:
-            results['reasons'].append(
-                f"Abnormal head pose: yaw={yaw:.1f}, pitch={pitch:.1f}, roll={roll:.1f}"
-            )
-
-        # Depth issues
-        if depth_stats.get('is_flat', False):
-            results['reasons'].append('Flat depth profile detected (possible 2D spoof)')
-            confidence_parts.append(0.5)
-
-        # Confidence calculation
-        if confidence_parts:
-            results['confidence'] = round(min(np.mean(confidence_parts) + 0.2, 1.0), 3)
-        elif not results['reasons']:
-            results['confidence'] = round(0.85 + abs(spoof_prob - 0.5) * 0.3, 3)
-            results['reasons'].append('No liveness concerns detected')
+        # Depth: flat = likely 2D spoof
+        if depth.get('is_flat', False):
+            score_factors.append(0.3)
+        elif depth.get('has_3d_structure', False):
+            score_factors.append(0.95)
         else:
-            results['confidence'] = 0.6
+            score_factors.append(0.6)
 
+        # Pose validity
+        if pose.get('within_valid_range', True):
+            score_factors.append(0.85)
+        else:
+            score_factors.append(0.4)
+
+        # Color channel consistency (real faces have smooth gradients)
+        if len(original.shape) == 3 and original.shape[2] >= 3:
+            r, g, b = original[:,:,0].astype(float), original[:,:,1].astype(float), original[:,:,2].astype(float)
+            smoothness = 1.0 - min(np.std(np.abs(np.diff(r, axis=0))) / 30, 1.0)
+            score_factors.append(smoothness * 0.8 + 0.2)
+        else:
+            score_factors.append(0.6)
+
+        liveness_score = np.mean(score_factors)
+        is_live = liveness_score > 0.5
+
+        results['liveness_score'] = round(float(liveness_score), 4)
+        results['is_live'] = is_live
+
+        # ── 5. Build Reasons ──
+        if texture.get('moire_pattern', 0) > 0.5:
+            results['reasons'].append(f"Moir\u00e9 pattern detected ({texture['moire_pattern']:.1%})")
+        if texture.get('screen_reflection', 0) > 0.5:
+            results['reasons'].append(f"Screen reflection detected ({texture['screen_reflection']:.1%})")
+        if texture.get('screen_edge', 0) > 0.5:
+            results['reasons'].append(f"Screen edge detected ({texture['screen_edge']:.1%})")
+        if texture.get('print_artifact', 0) > 0.5:
+            results['reasons'].append(f"Print artifact detected ({texture['print_artifact']:.1%})")
+        if depth.get('is_flat', False):
+            results['reasons'].append('Flat depth profile (possible 2D spoof)')
+        if not pose.get('within_valid_range', True):
+            results['reasons'].append(f"Abnormal head pose: yaw={pose.get('yaw',0):.1f}\u00b0")
+        if not is_live:
+            results['reasons'].append(f"Spoof detected (score: {liveness_score:.1%})")
+            results['spoof_type'] = self._classify_spoof_type(texture, depth)
         if not results['reasons']:
             results['reasons'].append('Liveness verified - appears to be a live capture')
+
+        results['confidence'] = round(min(abs(liveness_score - 0.5) * 2 + 0.3, 1.0), 3)
 
         return results
 
@@ -285,6 +279,124 @@ class LivenessDetectionService:
         results['confidence'] = round(min(avg_liveness + 0.1, 1.0), 3) if results['is_live'] else round(1.0 - avg_liveness, 3)
 
         return results
+
+    def _analyze_texture_content(self, gray: np.ndarray) -> dict:
+        """Analyze texture for moiré, screen, print artifacts."""
+        h, w = gray.shape
+        if h < 16 or w < 16:
+            return {'moire_pattern': 0.0, 'screen_reflection': 0.0, 'screen_edge': 0.0, 'print_artifact': 0.0}
+
+        # Moiré detection via frequency analysis
+        block_size = min(64, h, w)
+        moire_scores = []
+        for i in range(0, h - block_size, block_size):
+            for j in range(0, w - block_size, block_size):
+                block = gray[i:i+block_size, j:j+block_size]
+                fft = np.fft.fft2(block)
+                fft_shift = np.fft.fftshift(fft)
+                mag = np.abs(fft_shift)
+                center = block_size // 2
+                # Check for periodic peaks (moiré)
+                ring = mag[center-5:center+5, center-5:center+5]
+                outer = mag.copy()
+                outer[center-8:center+8, center-8:center+8] = 0
+                if np.sum(outer) > 0:
+                    ratio = np.max(outer) / (np.mean(outer) + 1e-10)
+                    moire_scores.append(min(ratio / 20, 1.0))
+        moire = np.mean(moire_scores) if moire_scores else 0.0
+
+        # Screen reflection: check for bright specular highlights
+        if len(gray.shape) == 2:
+            bright_ratio = np.mean(gray > 230)
+        else:
+            bright_ratio = 0.0
+        reflection = min(bright_ratio * 5, 1.0)
+
+        # Screen edge: check for sharp rectangular borders
+        top_edge = np.mean(np.abs(np.diff(gray[:5, :], axis=0)))
+        bottom_edge = np.mean(np.abs(np.diff(gray[-5:, :], axis=0)))
+        left_edge = np.mean(np.abs(np.diff(gray[:, :5], axis=1)))
+        right_edge = np.mean(np.abs(np.diff(gray[:, -5:], axis=1)))
+        edge_score = (top_edge + bottom_edge + left_edge + right_edge) / 4
+        screen_edge = min(edge_score / 30, 1.0)
+
+        # Print artifact: check for halftone-like patterns
+        try:
+            from scipy.ndimage import convolve
+            laplacian = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=float)
+            filtered = convolve(gray, laplacian)
+            noise_var = np.var(filtered)
+            # Print artifacts have very specific noise variance
+            print_art = 1.0 if 100 < noise_var < 500 else 0.0
+        except ImportError:
+            print_art = 0.0
+
+        return {
+            'moire_pattern': round(float(moire), 4),
+            'screen_reflection': round(float(reflection), 4),
+            'screen_edge': round(float(screen_edge), 4),
+            'print_artifact': round(float(print_art), 4),
+        }
+
+    def _estimate_depth_content(self, gray: np.ndarray, original: np.ndarray) -> dict:
+        """Estimate depth from image content (flat vs 3D)."""
+        h, w = gray.shape
+        if h < 10 or w < 10:
+            return {'mean_depth': 0.5, 'depth_variance': 0.0, 'is_flat': True, 'has_3d_structure': False}
+
+        # Gradient magnitude as depth proxy
+        gy, gx = np.gradient(gray)
+        gradient_mag = np.sqrt(gx**2 + gy**2)
+
+        depth_mean = float(np.mean(gradient_mag))
+        depth_var = float(np.var(gradient_mag))
+        depth_range = float(np.ptp(gradient_mag))
+
+        # Smooth gradients suggest flat surface (photo/screen)
+        is_flat = depth_var < 20 and depth_range < 50
+        # Complex gradients suggest 3D face
+        has_3d = depth_var > 100 and depth_range > 80
+
+        return {
+            'mean_depth': round(depth_mean, 4),
+            'depth_variance': round(depth_var, 6),
+            'depth_range': round(depth_range, 4),
+            'is_flat': is_flat,
+            'has_3d_structure': has_3d,
+            'confidence': round(min(depth_var / 200, 1.0), 3),
+        }
+
+    def _estimate_pose_content(self, gray: np.ndarray) -> dict:
+        """Estimate head pose from image content using gradient direction."""
+        h, w = gray.shape
+        if h < 20 or w < 20:
+            return {'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0, 'within_valid_range': True, 'face_3d': False}
+
+        gy, gx = np.gradient(gray)
+
+        # Asymmetry in horizontal gradient suggests yaw
+        left_grad = np.mean(np.abs(gx[:, :w//2]))
+        right_grad = np.mean(np.abs(gx[:, w//2:]))
+        yaw = float((right_grad - left_grad) / (left_grad + right_grad + 1e-6) * 45)
+
+        # Vertical gradient asymmetry suggests pitch
+        top_grad = np.mean(np.abs(gy[:h//2, :]))
+        bottom_grad = np.mean(np.abs(gy[h//2:, :]))
+        pitch = float((bottom_grad - top_grad) / (top_grad + bottom_grad + 1e-6) * 30)
+
+        # Overall gradient direction suggests roll
+        mean_angle = np.mean(np.arctan2(gy, gx))
+        roll = float(np.degrees(mean_angle) * 0.5)
+
+        within_range = self._check_pose_validity(yaw, pitch, roll)
+
+        return {
+            'yaw': round(yaw, 2),
+            'pitch': round(pitch, 2),
+            'roll': round(roll, 2),
+            'within_valid_range': within_range,
+            'face_3d': abs(yaw) > 5 or abs(pitch) > 5 or abs(roll) > 5,
+        }
 
     def _check_pose_validity(self, yaw: float, pitch: float, roll: float) -> bool:
         """Check if head pose is within natural ranges."""

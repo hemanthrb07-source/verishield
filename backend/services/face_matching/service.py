@@ -120,16 +120,43 @@ class FaceMatchingService:
         return locations
 
     def _extract_embedding(self, data: dict) -> Optional[np.ndarray]:
-        """Extract face embedding from image data."""
-        image_array = data.get('image_array')
-        if image_array is None:
-            return None
+        """Extract face embedding from image data using pixel-based features."""
+        original = data.get('original_image')
+        if original is None:
+            # Fallback to array
+            image_array = data.get('image_array')
+            if image_array is None:
+                return None
+            # Convert CHW to HWC
+            if len(image_array.shape) == 3 and image_array.shape[0] in (1, 3):
+                original = np.transpose(image_array, (1, 2, 0))
+                if original.max() <= 1.0:
+                    original = (original * 255).astype(np.uint8)
+            else:
+                original = image_array
 
-        tensor = torch.FloatTensor(image_array).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            embedding = self.model(tensor)
+        gray = np.mean(original, axis=2).astype(float) if len(original.shape) == 3 else original.astype(float)
+        h, w = gray.shape
 
-        return embedding.cpu().numpy().flatten()
+        # Resize to fixed size for comparison
+        from PIL import Image
+        pil = Image.fromarray(gray.astype(np.uint8))
+        pil = pil.resize((64, 64), Image.Resampling.LANCZOS)
+        flat = np.array(pil, dtype=float).flatten() / 255.0
+
+        # Add statistical features
+        hist, _ = np.histogram(gray.flatten(), bins=32, range=(0, 256))
+        hist = hist / (hist.sum() + 1e-10)
+
+        # Edge features
+        gy, gx = np.gradient(gray)
+        edge_mag = np.sqrt(gx**2 + gy**2)
+        edge_hist, _ = np.histogram(edge_mag.flatten(), bins=16, range=(0, 100))
+        edge_hist = edge_hist / (edge_hist.sum() + 1e-10)
+
+        # Combine into embedding
+        embedding = np.concatenate([flat, hist, edge_hist])
+        return embedding
 
     def _compute_similarity(self, emb1: np.ndarray, emb2: np.ndarray) -> float:
         """Compute cosine similarity between two face embeddings."""
