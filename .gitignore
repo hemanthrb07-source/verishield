@@ -63,3 +63,5 @@ backups/
 temp/
 .cache/
 .freebuff/
+test_video.mp4
+test_doc.png

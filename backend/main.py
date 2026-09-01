@@ -43,8 +43,8 @@ fraud_graph = FraudGraphService()
 blockchain = BlockchainLogger()
 liveness_service = LivenessDetectionService()
 
-# In-memory verification store (replace with PostgreSQL in production)
-verification_store = {}
+# Persistent verification store (SQLite-backed, survives restarts)
+from backend.core.store import verification_store
 
 START_TIME = time.time()
 
@@ -56,9 +56,10 @@ async def _broadcast_alerts(verification_id: str, result: dict):
         await alert_manager.broadcast(alert)
     if alerts:
         # Also broadcast updated stats
-        total = len(verification_store)
-        completed = sum(1 for v in verification_store.values() if v.get('status') == 'COMPLETED')
-        high_risk = sum(1 for v in verification_store.values() if v.get('risk_level') in ('HIGH', 'CRITICAL'))
+        db_stats = verification_store.stats()
+        total = db_stats['total_verifications']
+        completed = db_stats['completed']
+        high_risk = db_stats['high_risk_detected']
         await alert_manager.send_stats_update({
             'total_verifications': total,
             'completed': completed,
@@ -119,15 +120,13 @@ async def health_check():
 @app.get("/api/stats")
 async def get_stats():
     """Return system statistics."""
-    total = len(verification_store)
-    completed = sum(1 for v in verification_store.values() if v.get('status') == 'COMPLETED')
-    high_risk = sum(1 for v in verification_store.values() if v.get('risk_level') in ('HIGH', 'CRITICAL'))
+    db_stats = verification_store.stats()
 
     return {
-        "total_verifications": total,
-        "completed": completed,
-        "high_risk_detected": high_risk,
-        "avg_trust_score": _avg_trust_score(),
+        "total_verifications": db_stats['total_verifications'],
+        "completed": db_stats['completed'],
+        "high_risk_detected": db_stats['high_risk_detected'],
+        "avg_trust_score": db_stats['avg_trust_score'],
         "graph_nodes": len(fraud_graph.nodes),
         "blockchain_blocks": len(blockchain.chain),
     }
@@ -228,7 +227,7 @@ async def verify_document(
         processing_time = int((time.time() - start) * 1000)
 
         # Update store
-        verification_store[verification_id].update({
+        verification_store.update(verification_id, {
             'status': 'COMPLETED',
             'trust_score': risk['trust_score'],
             'risk_level': risk['risk_level'],
@@ -355,7 +354,7 @@ async def verify_deepfake(
 
         processing_time = int((time.time() - start) * 1000)
 
-        verification_store[verification_id].update({
+        verification_store.update(verification_id, {
             'status': 'COMPLETED',
             'trust_score': risk['trust_score'],
             'risk_level': risk['risk_level'],
@@ -488,7 +487,7 @@ async def verify_face(
 
         processing_time = int((time.time() - start) * 1000)
 
-        verification_store[verification_id].update({
+        verification_store.update(verification_id, {
             'status': 'COMPLETED',
             'trust_score': risk['trust_score'],
             'risk_level': risk['risk_level'],
@@ -604,7 +603,7 @@ async def full_verification(
 
         processing_time = int((time.time() - start) * 1000)
 
-        verification_store[verification_id].update({
+        verification_store.update(verification_id, {
             'status': 'COMPLETED',
             'trust_score': risk['trust_score'],
             'risk_level': risk['risk_level'],
@@ -816,7 +815,7 @@ async def verify_liveness(
 
         processing_time = int((time.time() - start) * 1000)
 
-        verification_store[verification_id].update({
+        verification_store.update(verification_id, {
             'status': 'COMPLETED',
             'trust_score': risk['trust_score'],
             'risk_level': risk['risk_level'],
@@ -1125,31 +1124,17 @@ async def list_verifications(
     risk_level: Optional[str] = None,
 ):
     """List verification history."""
-    items = list(verification_store.values())
-
-    if status:
-        items = [v for v in items if v.get('status') == status]
-    if risk_level:
-        items = [v for v in items if v.get('risk_level') == risk_level]
-
-    items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-    total = len(items)
-    items = items[offset:offset + limit]
-
-    return {
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "items": items,
-    }
+    result = verification_store.list(limit=limit, offset=offset, status=status, risk_level=risk_level)
+    return _safe_serialize(result)
 
 
 @app.get("/verifications/{verification_id}")
 async def get_verification(verification_id: str):
     """Get a specific verification result."""
-    if verification_id not in verification_store:
+    item = verification_store.get(verification_id)
+    if item is None:
         raise HTTPException(404, "Verification not found")
-    return verification_store[verification_id]
+    return _safe_serialize(item)
 
 
 if __name__ == "__main__":
