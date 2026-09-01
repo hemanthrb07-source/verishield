@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { VerificationResult } from '../services/api'
 import { HeatmapDisplay } from './HeatmapDisplay'
+import { TrustScoreBreakdown } from './TrustScoreBreakdown'
 import {
   CheckCircle, XCircle, AlertTriangle, Clock,
   FileText, Eye, Fingerprint, Network, Layers,
@@ -73,6 +74,15 @@ export function ResultsPanel({ result }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Trust Score Breakdown Chart */}
+      {riskAssessment.component_scores && (
+        <TrustScoreBreakdown
+          componentScores={riskAssessment.component_scores}
+          trustScore={result.trust_score ?? 0}
+          riskLevel={result.risk_level ?? 'UNKNOWN'}
+        />
+      )}
 
       {/* Contributing Factors */}
       {contributingFactors.length > 0 && (
