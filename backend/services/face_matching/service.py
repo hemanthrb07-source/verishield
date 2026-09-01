@@ -46,7 +46,7 @@ class FaceMatchingService:
         # Detect faces in probe image
         probe_image = probe_data.get('original_image')
         if probe_image is None:
-            results['reasons'].append('No image data available')
+            results['reasons'].append('No image data was provided — please upload an image to analyze.')
             return results
 
         faces = self._detect_faces(probe_image)
@@ -54,16 +54,27 @@ class FaceMatchingService:
         results['face_locations'] = faces
 
         if len(faces) == 0:
-            results['reasons'].append('No faces detected in image')
+            results['reasons'].append(
+                'No face was found in this image. The system could not verify identity '
+                'because no face was visible. Make sure the face is clearly visible, '
+                'not covered, and well-lit.'
+            )
             return results
 
         if len(faces) > 1:
-            results['reasons'].append(f'Detected {len(faces)} faces - expected single face')
+            results['reasons'].append(
+                f'{len(faces)} faces were detected in this image. The system works best '
+                f'with a single face per image. Multiple faces can reduce accuracy.'
+            )
 
         # Quality assessment
         results['quality_score'] = self._assess_quality(probe_image, faces)
         if results['quality_score'] < 0.3:
-            results['reasons'].append('Low image quality may affect accuracy')
+            results['reasons'].append(
+                'The image quality is low — it may be blurry, too dark, or too small. '
+                'This can reduce the accuracy of face matching. '
+                'Try uploading a clearer, well-lit photo.'
+            )
 
         # Generate embedding for probe
         probe_embedding = self._extract_embedding(probe_data)
@@ -78,16 +89,32 @@ class FaceMatchingService:
 
                 if results['is_match']:
                     results['reasons'].append(
-                        f'Face match confirmed (score: {score:.3f})'
+                        f'✅ The face in this image matches the reference photo with high confidence '
+                        f'(similarity: {score:.0%}). The person appears to be the same.'
                     )
                 else:
-                    results['reasons'].append(
-                        f'Face mismatch (score: {score:.3f}, threshold: {self.match_threshold})'
-                    )
+                    if score < 0.3:
+                        results['reasons'].append(
+                            f'❌ The face does NOT match the reference photo — the similarity is '
+                            f'very low ({score:.0%}). This could be a completely different person.'
+                        )
+                    else:
+                        results['reasons'].append(
+                            f'⚠️ The face does not closely match the reference photo '
+                            f'(similarity: {score:.0%}). Some facial features differ from the original. '
+                            f'This could be the same person with a different angle or expression, '
+                            f'or it could be a different person.'
+                        )
             else:
-                results['reasons'].append('Could not generate face embeddings')
+                results['reasons'].append(
+                    'Could not analyze the face in one or both images. '
+                    'The images may be too small, blurry, or the face may not be clear enough.'
+                )
         else:
-            results['reasons'].append('No reference image provided for matching')
+            results['reasons'].append(
+                'No reference photo was provided for comparison. '
+                'Upload a reference image (e.g., an ID photo) to compare against.'
+            )
 
         return results
 

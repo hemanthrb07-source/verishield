@@ -251,7 +251,7 @@ async def verify_document(
             "trust_score": risk['trust_score'],
             "risk_level": risk['risk_level'],
             "confidence": risk['confidence'],
-            "reasons": [f['description'] for f in risk['contributing_factors']],
+            "reasons": [f['description'] for f in risk['contributing_factors']] + doc_results.get('reasons', []),
             "detailed_results": {
                 "document_analysis": {
                     "authenticity_score": doc_results['authenticity_score'],
@@ -261,6 +261,7 @@ async def verify_document(
                     "spacing_anomalies": len(doc_results['spacing_anomalies']),
                     "metadata_flags": len(doc_results['metadata_analysis'].get('suspicious_indicators', [])),
                     "content_type": doc_results.get('content_type', 'unknown'),
+                    "reasons": doc_results.get('reasons', []),
                 },
                 "risk_assessment": risk,
                 "heatmap": {
@@ -372,7 +373,7 @@ async def verify_deepfake(
             "trust_score": risk['trust_score'],
             "risk_level": risk['risk_level'],
             "confidence": risk['confidence'],
-            "reasons": [f['description'] for f in risk['contributing_factors']],
+            "reasons": [f['description'] for f in risk['contributing_factors']] + deepfake_results.get('reasons', []),
             "detailed_results": {
                 "deepfake_analysis": {
                     "is_deepfake": deepfake_results['is_deepfake'],
@@ -382,6 +383,7 @@ async def verify_deepfake(
                     "gan_fingerprint": deepfake_results['gan_fingerprint'],
                     "confidence": deepfake_results['confidence'],
                     "frame_count": len(deepfake_results.get('frame_analysis') or []),
+                    "reasons": deepfake_results.get('reasons', []),
                 },
                 "risk_assessment": risk,
                 "heatmap": {
@@ -504,7 +506,7 @@ async def verify_face(
             "trust_score": risk['trust_score'],
             "risk_level": risk['risk_level'],
             "confidence": risk['confidence'],
-            "reasons": [f['description'] for f in risk['contributing_factors']],
+            "reasons": [f['description'] for f in risk['contributing_factors']] + face_results.get('reasons', []),
             "detailed_results": {
                 "face_analysis": {
                     "faces_detected": face_results['faces_detected'],
@@ -628,7 +630,7 @@ async def full_verification(
             "trust_score": risk['trust_score'],
             "risk_level": risk['risk_level'],
             "confidence": risk['confidence'],
-            "reasons": [f['description'] for f in risk['contributing_factors']],
+            "reasons": [f['description'] for f in risk['contributing_factors']] + (doc_results.get('reasons', []) if doc_results else []) + deepfake_results.get('reasons', []) + face_results.get('reasons', []),
             "detailed_results": {
                 "document_analysis": doc_results if doc_results else None,
                 "deepfake_analysis": {

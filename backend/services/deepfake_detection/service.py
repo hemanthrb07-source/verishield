@@ -106,25 +106,52 @@ class DeepfakeDetectionService:
         results['is_deepfake'] = probability > self.threshold
         results['confidence'] = round(abs(probability - 0.5) * 2, 3)
 
-        # Build reasons
+        # Build plain-English reasons
         if freq['suspicious']:
-            results['reasons'].append(f"GAN fingerprint detected (spectral score: {freq['score']:.3f})")
+            results['reasons'].append(
+                "AI fingerprint detected — the mathematical patterns in this image match those typically produced "
+                "by AI image generators like GANs or Stable Diffusion. Real camera photos don't usually have these patterns."
+            )
         if color['has_artifacts']:
-            results['reasons'].append(f"Color channel artifacts: {color['description']}")
+            results['reasons'].append(
+                f"Unusual color patterns found — {color['description']}. "
+                "The colors transition in ways that don't look natural, which is common in AI-generated images."
+            )
         if noise['anomaly']:
-            results['reasons'].append(f"Noise pattern anomaly (score: {noise['score']:.3f})")
+            results['reasons'].append(
+                "The grain or texture of this image is inconsistent — some parts are too smooth while others are noisy. "
+                "In real photos, noise is usually uniform across the entire image."
+            )
         if edge['incoherent']:
-            results['reasons'].append(f"Edge incoherence detected (score: {edge['score']:.3f})")
+            results['reasons'].append(
+                "The edges and outlines in this image don't flow naturally — lines are disjointed or randomly oriented. "
+                "Real photos have smooth, connected edges."
+            )
         if texture['anomalous']:
-            results['reasons'].append(f"Texture anomaly detected (score: {texture['score']:.3f})")
+            results['reasons'].append(
+                "The surface texture looks artificially smooth or repetitive — it lacks the natural micro-variations "
+                "found in real photographs."
+            )
         if lighting['inconsistent']:
-            results['reasons'].append(f"Lighting inconsistency (score: {lighting['score']:.3f})")
+            results['reasons'].append(
+                "The lighting is inconsistent — different parts of the image appear to be lit from different angles. "
+                "In a real photo, the light should come from a single direction."
+            )
         if face_region['suspicious']:
-            results['reasons'].append(f"Face region artifacts (score: {face_region['score']:.3f})")
+            results['reasons'].append(
+                "The face area shows suspicious blending patterns — there may be visible seams or edges where "
+                "a face was pasted onto the image. This is a common deepfake artifact."
+            )
         if jpeg['heavy_compression']:
-            results['reasons'].append(f"Heavy JPEG recompression detected (score: {jpeg['score']:.3f})")
+            results['reasons'].append(
+                "The image has been saved and re-saved many times (heavy compression). "
+                "This can be a sign of the image being shared across multiple platforms after manipulation."
+            )
         if not results['reasons']:
-            results['reasons'].append("No deepfake indicators detected")
+            results['reasons'].append(
+                f"No signs of AI manipulation were found. This image appears to be authentic. "
+                f"The chance of it being fake is only {results['deepfake_probability']:.0%}."
+            )
 
         return results
 
@@ -298,51 +325,64 @@ class DeepfakeDetectionService:
         results['blinking_anomaly'] = blink_count / total_frames > 0.25
         results['gan_fingerprint'] = gan_count / total_frames > 0.20
 
-        # ── Build reasons ──
+        # ── Build plain-English reasons ──
         if results['is_deepfake']:
             results['reasons'].append(
-                f"Deepfake detected: avg={avg_prob:.1%}, max={max_prob:.1%}, "
-                f"frames_analyzed={total_frames}"
+                f"⚠️ DEEPFAKE DETECTED — This video is very likely fake or AI-generated. "
+                f"On average, {avg_prob:.0%} of each frame showed signs of manipulation "
+                f"(worst frame: {max_prob:.0%}). We analyzed {total_frames} frames to reach this conclusion."
             )
         else:
             results['reasons'].append(
-                f"Analysis complete: avg_score={avg_prob:.1%}, max={max_prob:.1%} across {total_frames} frames"
+                f"✅ This video appears to be authentic. Across {total_frames} frames, "
+                f"the average fake probability was only {avg_prob:.0%} (highest: {max_prob:.0%}). "
+                f"No significant signs of AI manipulation were found."
             )
 
         if temporal_inconsistency:
             results['reasons'].append(
-                f"Temporal inconsistency detected (std={std_prob:.3f}) — "
-                f"frame scores vary significantly"
+                f"The video looks choppy or inconsistent from frame to frame — "
+                f"some frames look very different from others, which can happen when "
+                f"a face is digitally swapped into different parts of the video."
             )
         if has_spikes:
             results['reasons'].append(
-                f"Probability spikes between frames ({spike_count} spikes detected) — "
-                f"possible frame-level manipulation"
+                f"We found {spike_count} sudden jumps in manipulation signals between frames. "
+                f"This suggests certain frames were edited or replaced individually, "
+                f"which is a common technique in video deepfakes."
             )
         if unnaturally_smooth:
             results['reasons'].append(
-                f"Unnaturally smooth temporal motion (CV={delta_cv:.3f}) — "
-                f"possible synthetic video generation"
+                "The motion in this video is too smooth — real videos always have some natural jitter. "
+                f"This level of perfection usually means the video was generated by AI."
             )
         if has_motion_spikes:
             results['reasons'].append(
-                "Motion spikes detected — "
-                "possible face region manipulation between frames"
+                "Sudden large movements were detected between frames, especially around the face area. "
+                "This can happen when a fake face is pasted over the real one and doesn't move naturally."
             )
         if results['gan_fingerprint']:
             results['reasons'].append(
-                f"GAN fingerprint found in {gan_count}/{total_frames} frames"
+                f"AI-generated image patterns were found in {gan_count} out of {total_frames} frames. "
+                f"These mathematical fingerprints are left behind by AI image generators and "
+                f"don't appear in real camera footage."
             )
         if results['face_artifacts']:
             results['reasons'].append(
-                f"Face artifacts found in {artifact_count}/{total_frames} frames"
+                f"Unusual patterns were detected on the face in {artifact_count} out of {total_frames} frames. "
+                f"The face region looks digitally altered — edges may be blurry, textures unnatural, "
+                f"or blending seams visible."
             )
         if results['blinking_anomaly']:
             results['reasons'].append(
-                f"Blinking/edge anomaly in {blink_count}/{total_frames} frames"
+                f"Abnormal blinking or eye movement was detected in {blink_count} out of {total_frames} frames. "
+                f"Deepfake faces often have unnatural eye behavior — eyes may not blink, "
+                f"or the blinking pattern doesn't match normal human behavior."
             )
         if not results['reasons']:
-            results['reasons'].append("No deepfake indicators in video")
+            results['reasons'].append(
+                "No signs of AI manipulation were found in this video. It appears to be authentic."
+            )
 
         return results
 

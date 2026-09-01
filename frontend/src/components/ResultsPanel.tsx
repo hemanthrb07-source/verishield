@@ -113,18 +113,32 @@ export function ResultsPanel({ result }: Props) {
         </div>
       )}
 
-      {/* Reasons */}
+      {/* Plain-English Explanation */}
       {result.reasons && result.reasons.length > 0 && (
-        <div className="card">
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">Detection Reasons</h3>
-          <ul className="space-y-2">
-            {result.reasons.map((reason, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-gray-300">
-                <span className="text-brand-400 mt-1">•</span>
-                {reason}
-              </li>
-            ))}
-          </ul>
+        <div className="card border-brand-500/30">
+          <h3 className="text-sm font-semibold text-brand-400 mb-3 flex items-center gap-2">
+            📋 What We Found — Simple Explanation
+          </h3>
+          <div className="space-y-3">
+            {result.reasons.map((reason, i) => {
+              const isPositive = reason.startsWith('✅')
+              const isWarning = reason.startsWith('⚠️')
+              const isNegative = reason.startsWith('❌')
+              return (
+                <div key={i} className={`p-3 rounded-xl text-sm leading-relaxed
+                  ${isNegative ? 'bg-red-500/10 border border-red-500/20 text-red-200'
+                  : isWarning ? 'bg-amber-500/10 border border-amber-500/20 text-amber-200'
+                  : isPositive ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-200'
+                  : 'bg-gray-800/50 border border-gray-700/50 text-gray-300'}`}
+                >
+                  {reason}
+                </div>
+              )
+            })}
+          </div>
+          <p className="text-xs text-gray-500 mt-3 italic">
+            These explanations describe what our AI detected in the uploaded file, explained in everyday language.
+          </p>
         </div>
       )}
 
@@ -268,25 +282,36 @@ function AnalysisSection({ title, icon, isExpanded, onToggle, children }: {
 }
 
 function DocumentAnalysis({ data }: { data: any }) {
+  const score = data.authenticity_score * 100
+  let verdict = ''
+  let verdictColor = ''
+  if (score >= 80) { verdict = 'This document looks authentic — no signs of editing were found.'; verdictColor = 'text-emerald-400' }
+  else if (score >= 60) { verdict = 'This document has some minor irregularities, but nothing clearly suspicious.'; verdictColor = 'text-amber-400' }
+  else if (score >= 40) { verdict = 'This document has several concerns — parts of it may have been edited or altered.'; verdictColor = 'text-amber-400' }
+  else { verdict = 'This document looks suspicious — multiple signs of tampering or manipulation were found.'; verdictColor = 'text-red-400' }
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <StatBox label="Authenticity" value={`${(data.authenticity_score * 100).toFixed(0)}%`}
+        <StatBox label="Authenticity Score" value={`${score.toFixed(0)} / 100`}
           good={data.authenticity_score > 0.7} />
         <StatBox label="Tampering" value={data.tampering_detected ? 'Detected' : 'None'}
           good={!data.tampering_detected} />
       </div>
+      <div className={`p-3 rounded-xl bg-gray-800/50 border border-gray-700/50 text-sm ${verdictColor}`}>
+        {verdict}
+      </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="p-2 bg-gray-800/50 rounded-lg">
-          <p className="text-xs text-gray-500">Font Issues</p>
+          <p className="text-xs text-gray-500">Text Style Issues</p>
           <p className="text-lg font-bold text-gray-200">{data.font_inconsistencies}</p>
         </div>
         <div className="p-2 bg-gray-800/50 rounded-lg">
-          <p className="text-xs text-gray-500">Tampered Regions</p>
+          <p className="text-xs text-gray-500">Edited Regions</p>
           <p className="text-lg font-bold text-gray-200">{data.tampered_regions}</p>
         </div>
         <div className="p-2 bg-gray-800/50 rounded-lg">
-          <p className="text-xs text-gray-500">Spacing Issues</p>
+          <p className="text-xs text-gray-500">Spacing Problems</p>
           <p className="text-lg font-bold text-gray-200">{data.spacing_anomalies}</p>
         </div>
       </div>
@@ -295,29 +320,41 @@ function DocumentAnalysis({ data }: { data: any }) {
 }
 
 function DeepfakeAnalysis({ data }: { data: any }) {
+  const prob = data.probability * 100
+  let verdict = ''
+  let verdictColor = ''
+  if (prob < 20) { verdict = 'This image/video looks real — very low chance of being AI-generated.'; verdictColor = 'text-emerald-400' }
+  else if (prob < 50) { verdict = 'Some minor signs were detected, but this is likely a real image.'; verdictColor = 'text-emerald-400' }
+  else if (prob < 70) { verdict = 'There is a moderate chance this is AI-generated or manipulated.'; verdictColor = 'text-amber-400' }
+  else if (prob < 90) { verdict = 'This is likely a deepfake — strong signs of AI generation were found.'; verdictColor = 'text-red-400' }
+  else { verdict = '⚠️ Almost certainly AI-generated — this is very likely a deepfake.'; verdictColor = 'text-red-400' }
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <StatBox label="Deepfake" value={data.is_deepfake ? 'YES' : 'NO'}
+        <StatBox label="Deepfake Detected" value={data.is_deepfake ? 'YES' : 'NO'}
           good={!data.is_deepfake} />
-        <StatBox label="Probability" value={`${(data.probability * 100).toFixed(1)}%`}
+        <StatBox label="Fake Chance" value={`${prob.toFixed(1)}%`}
           good={data.probability < 0.5} />
+      </div>
+      <div className={`p-3 rounded-xl bg-gray-800/50 border border-gray-700/50 text-sm ${verdictColor}`}>
+        {verdict}
       </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="p-2 bg-gray-800/50 rounded-lg">
-          <p className="text-xs text-gray-500">Artifacts</p>
+          <p className="text-xs text-gray-500">Face Issues</p>
           <p className={`text-sm font-bold ${data.face_artifacts ? 'text-red-400' : 'text-emerald-400'}`}>
-            {data.face_artifacts ? 'Yes' : 'No'}
+            {data.face_artifacts ? 'Found' : 'None'}
           </p>
         </div>
         <div className="p-2 bg-gray-800/50 rounded-lg">
-          <p className="text-xs text-gray-500">Blinking</p>
+          <p className="text-xs text-gray-500">Eye Behavior</p>
           <p className={`text-sm font-bold ${data.blinking_anomaly ? 'text-red-400' : 'text-emerald-400'}`}>
-            {data.blinking_anomaly ? 'Abnormal' : 'Normal'}
+            {data.blinking_anomaly ? 'Unnatural' : 'Normal'}
           </p>
         </div>
         <div className="p-2 bg-gray-800/50 rounded-lg">
-          <p className="text-xs text-gray-500">GAN Fingerprint</p>
+          <p className="text-xs text-gray-500">AI Signature</p>
           <p className={`text-sm font-bold ${data.gan_fingerprint ? 'text-red-400' : 'text-emerald-400'}`}>
             {data.gan_fingerprint ? 'Detected' : 'None'}
           </p>
@@ -331,18 +368,37 @@ function DeepfakeAnalysis({ data }: { data: any }) {
 }
 
 function FaceAnalysis({ data }: { data: any }) {
+  let verdict = ''
+  let verdictColor = ''
+  if (data.match_score === null) {
+    verdict = 'No reference photo was provided for comparison.'
+    verdictColor = 'text-gray-400'
+  } else if (data.is_match) {
+    verdict = 'The face in this image matches the reference photo — this appears to be the same person.'
+    verdictColor = 'text-emerald-400'
+  } else if (data.match_score < 0.3) {
+    verdict = 'The face does NOT match the reference — this could be a completely different person.'
+    verdictColor = 'text-red-400'
+  } else {
+    verdict = 'The face does not closely match the reference — some features differ from the original.'
+    verdictColor = 'text-amber-400'
+  }
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <StatBox label="Faces Detected" value={String(data.faces_detected)}
+        <StatBox label="Faces Found" value={String(data.faces_detected)}
           good={data.faces_detected === 1} />
-        <StatBox label="Match Score" value={data.match_score !== null ? data.match_score.toFixed(3) : 'N/A'}
+        <StatBox label="Similarity" value={data.match_score !== null ? `${(data.match_score * 100).toFixed(0)}%` : 'N/A'}
           good={data.is_match} />
       </div>
+      <div className={`p-3 rounded-xl bg-gray-800/50 border border-gray-700/50 text-sm ${verdictColor}`}>
+        {verdict}
+      </div>
       <div className="grid grid-cols-2 gap-3">
-        <StatBox label="Match Result" value={data.is_match ? 'MATCH' : (data.match_score !== null ? 'NO MATCH' : 'N/A')}
+        <StatBox label="Match" value={data.is_match ? 'SAME PERSON' : (data.match_score !== null ? 'MISMATCH' : 'N/A')}
           good={data.is_match || data.match_score === null} />
-        <StatBox label="Quality Score" value={`${(data.quality_score * 100).toFixed(0)}%`}
+        <StatBox label="Image Quality" value={`${(data.quality_score * 100).toFixed(0)}%`}
           good={data.quality_score > 0.5} />
       </div>
     </div>

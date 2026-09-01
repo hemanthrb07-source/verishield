@@ -154,21 +154,54 @@ class DocumentIntelligenceService:
         results['authenticity_score'] = score
         results['tampering_detected'] = score < 0.7 or len(tampered['regions']) > 2
 
-        # Build reasons
-        if len(color_issues['issues']) > 0:
-            results['reasons'].append(f"Color distribution anomalies: {len(color_issues['issues'])} issue(s)")
-        if len(edge_issues['issues']) > 0:
-            results['reasons'].append(f"Edge inconsistencies: {len(edge_issues['issues'])} issue(s)")
+        # Build plain-English reasons
+        color_count = len(color_issues['issues'])
+        if color_count > 0:
+            area_word = 'areas' if color_count > 1 else 'area'
+            results['reasons'].append(
+                f"The colors in this document look unusual — {color_count} {area_word} "
+                f"have color patterns that don't look natural. This could mean the image was edited."
+            )
+        edge_count = len(edge_issues['issues'])
+        if edge_count > 0:
+            section_word = 'sections' if edge_count > 1 else 'section'
+            results['reasons'].append(
+                f"Some edges in the document look irregular — {edge_count} {section_word} "
+                f"have lines or borders that appear artificially sharp or blurry. This often happens when parts of an image are copy-pasted."
+            )
         if noise_analysis['anomaly_score'] > 0.3:
-            results['reasons'].append(f"Noise pattern anomaly: {noise_analysis['anomaly_score']:.2f}")
-        if len(tampered['regions']) > 0:
-            results['reasons'].append(f"Tampered regions detected: {len(tampered['regions'])}")
+            results['reasons'].append(
+                f"The texture of the image looks inconsistent — some parts are smoother or grainier than others. "
+                f"This can be a sign that different images were stitched together."
+            )
+        tamper_count = len(tampered['regions'])
+        if tamper_count > 0:
+            area_word = 'areas' if tamper_count > 1 else 'area'
+            results['reasons'].append(
+                f"{tamper_count} {area_word} in the document look different from the rest — "
+                f"they have unusual texture or brightness that doesn't match the surrounding content. "
+                f"This is a common sign of editing or tampering."
+            )
         if channel_analysis['anomaly']:
-            results['reasons'].append("Unusual color channel correlation")
+            results['reasons'].append(
+                "The color channels (red, green, blue) don't behave normally — they're too independent of each other. "
+                f"In real photos, these channels usually move together. This mismatch can indicate digital manipulation."
+            )
         if quality['is_too_uniform']:
-            results['reasons'].append("Image is too uniform (possible synthetic)")
+            results['reasons'].append(
+                "The image looks artificially uniform — real documents and photos always have some natural variation. "
+                f"This level of uniformity is more typical of computer-generated images."
+            )
         if results['tampering_detected']:
-            results['reasons'].append("Document appears to have been modified")
+            results['reasons'].append(
+                f"Based on all the checks above, this document appears to have been modified. "
+                f"The trust score is {results['authenticity_score'] * 100:.0f} out of 100."
+            )
+        elif not results['reasons']:
+            results['reasons'].append(
+                f"This document looks authentic — no signs of editing or tampering were detected. "
+                f"Trust score: {results['authenticity_score'] * 100:.0f} out of 100."
+            )
 
         return results
 
